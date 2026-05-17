@@ -1,27 +1,29 @@
 # Community Photo Wall
 
-A beginner-friendly UGC (user-generated content) app built with **TanStack Start**, **Cloudinary**, **ShadCN UI**, and **Tailwind CSS v4**.
+A community UGC app built with **TanStack Start**, **Cloudinary**, **ShadCN UI**, and **Tailwind CSS v4**.
 
-Community members upload photos, Cloudinary processes them (resize + watermark), and a simple moderation layer decides which photos appear on the public gallery.
+Users upload photos, Cloudinary processes them (resize · face crop · watermark · WebP), WebPurify automatically moderates them, and only approved photos appear in the public gallery. Cloudinary's context fields serve as the persistent metadata store — no separate database required.
 
 ---
 
-## What the app does
+## Routes
 
-| Route | What it shows |
+| Route | Description |
 |---|---|
-| `/` | Landing page — explains the app and links to Upload & Gallery |
-| `/upload` | Upload form — validates file type & size, sends to Cloudinary |
+| `/` | Landing page — explains the app and the Cloudinary pipeline |
+| `/upload` | Upload form — validates, chunks, and sends photos to Cloudinary |
 | `/gallery` | Public photo wall — only **approved** photos are shown |
+| `/moderate` | Moderation queue — approve, reject, or poll WebPurify for auto-moderation results |
 
 ---
 
 ## Tech stack
 
-- [TanStack Start](https://tanstack.com/start) — full-stack React framework
+- [TanStack Start](https://tanstack.com/start) — full-stack React framework with server functions
 - [TanStack Router](https://tanstack.com/router) — type-safe file-based routing
-- [Cloudinary](https://cloudinary.com) — image upload, resize, crop, watermark
-- [ShadCN UI](https://ui.shadcn.com) — accessible component library
+- [Cloudinary Node.js SDK v2](https://cloudinary.com/documentation/node_integration) — upload, transform, and metadata storage
+- [WebPurify addon](https://cloudinary.com/documentation/webpurify_image_moderation_addon) — automatic AI image moderation
+- [ShadCN UI](https://ui.shadcn.com) — accessible component primitives
 - [Tailwind CSS v4](https://tailwindcss.com) — utility-first styling
 
 ---
@@ -34,54 +36,97 @@ Community members upload photos, Cloudinary processes them (resize + watermark),
 npm install
 ```
 
-### 2. Add your Cloudinary credentials
+### 2. Create a Cloudinary upload preset
 
-Copy `.env.local` (already provided) and fill in your values:
+In your [Cloudinary Console](https://cloudinary.com/console):
 
-```
+1. Go to **Settings → Upload → Upload presets → Add upload preset**
+2. Set **Preset name** to `community_photo_wall`
+3. Set **Signing mode** to **Signed**
+4. Under **Folder**, enter `community-photo-wall`
+5. Under **Tags**, add `ugc` and `photo-wall`
+6. Under **Incoming transformations**, add:
+   - Resize: `c_fill, w_800, h_800, g_auto:faces, q_auto, f_webp`
+   - Watermark overlay (logo or text)
+7. Under **Moderation**, select **WebPurify**
+8. Save
+
+### 3. Set environment variables
+
+Copy `.env.local` and fill in your values from the Cloudinary Console:
+
+```bash
+# Cloudinary credentials (Dashboard → API Keys)
 CLOUDINARY_CLOUD_NAME=your_cloud_name
 CLOUDINARY_API_KEY=your_api_key
 CLOUDINARY_API_SECRET=your_api_secret
 
-# Optional — public_id of a logo image uploaded to Cloudinary.
+# Upload preset name from step 2
+CLOUDINARY_UPLOAD_PRESET=community_photo_wall
+
+# Optional: public_id of a Cloudinary-hosted logo to use as watermark.
 # Leave empty to use the default "© PhotoWall" text watermark.
 CLOUDINARY_WATERMARK_PUBLIC_ID=
+
+# Optional: public HTTPS URL for Cloudinary to POST WebPurify results to.
+# In development, run `npx ngrok http 3000` and paste the tunnel URL:
+#   CLOUDINARY_WEBHOOK_URL=https://abc123.ngrok-free.app/api/cloudinary-webhook
+# Without this, use the "Check status" button on the moderation page to poll manually.
+CLOUDINARY_WEBHOOK_URL=
+
+# Exposed to the browser — set to the same value as CLOUDINARY_CLOUD_NAME.
+VITE_CLOUDINARY_CLOUD_NAME=your_cloud_name
 ```
 
-You can find these values in the [Cloudinary Console](https://cloudinary.com/console) under **Dashboard → API Keys**.
-
-### 3. Run the dev server
+### 4. Run the dev server
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Open [http://localhost:3000](http://localhost:3000).
 
 ---
 
 ## How Cloudinary is used
 
-Every upload goes through `src/lib/cloudinary.ts`. The key transformations applied before the image is stored:
+### Upload pipeline
 
-1. **Resize** — the image is scaled to fit within 800 × 800 px.
-2. **Face-detect crop** — `gravity: "auto:faces"` centres the crop on detected faces, so portraits look good.
-3. **Watermark** — either a logo image (if `CLOUDINARY_WATERMARK_PUBLIC_ID` is set) or a text overlay `© PhotoWall` is placed in the bottom-right corner.
-4. **Format & quality** — converted to WebP with `quality: "auto"` for smaller file sizes.
+Every photo is chunked into 1 MB pieces on the client, streamed to the server via `createServerFn`, assembled into a single `Buffer`, then uploaded to Cloudinary via `upload_stream`. The following **incoming transformations** fire before the file is stored — the result is baked in, so delivery is instant with no per-request compute cost:
 
----
+| Step | Cloudinary param | Effect |
+|---|---|---|
+| Resize | `c_fill, w_800, h_800` | Crops to 800×800, no whitespace |
+| Face crop | `g_auto:faces` | Centres the crop on detected faces |
+| Watermark | `l_<public_id>` or text overlay | Brand stamp baked into the stored file |
+| Format | `f_webp` | Converts to WebP at upload time |
+| Quality | `q_auto` | Smallest file size with acceptable fidelity |
 
-## How moderation works (demo)
+### Cloudinary as the metadata database
 
-This demo uses an **in-memory store** (`src/lib/mock-photos.ts`) instead of a real database. Every upload is saved with `status: "pending"` and does **not** appear in the gallery immediately.
+All app metadata is stored as **Cloudinary context fields** on each asset — no separate database is needed:
 
-To simulate approval, you can edit the store directly — or extend the app with an admin route that calls `updatePhotoStatus(id, "approved")`.
+| Context key | Value |
+|---|---|
+| `pw_id` | App-generated photo ID |
+| `pw_title` | User-supplied caption |
+| `pw_status` | `pending` / `approved` / `rejected` |
+| `pw_original_size` | Original file size in bytes (before upload) |
+| `pw_moderation_source` | `webpurify` or `human` |
 
-When you are ready to add persistence, swap `mock-photos.ts` for a Prisma (or any ORM) adapter — the rest of the app does not change.
+Photos are fetched via `cloudinary.api.resources_by_tag("photo-wall")` and status updates are written via `cloudinary.uploader.add_context()` (merges individual keys without replacing the full context). This means photo data persists across server restarts and Vercel deploys.
+
+### Moderation
+
+Every upload starts with `status: pending` and is invisible in the gallery.
+
+**Automatic (WebPurify)** — the Cloudinary WebPurify addon analyses the image asynchronously. If a webhook URL is configured, Cloudinary POSTs the result to your server. In development, click **Check status** on the moderation page to poll the Cloudinary Admin API manually.
+
+**Manual (human override)** — the `/moderate` page lets you approve or reject any photo regardless of the WebPurify result. The moderation source badge (`🤖 WebPurify` / `👤 Human`) shows which source last set the status.
 
 ```
-pending  →  approved  (visible in gallery)
-         →  rejected  (hidden)
+pending  ──→  approved  (appears in gallery)
+         └──→  rejected  (stored but hidden)
 ```
 
 ---
@@ -91,24 +136,33 @@ pending  →  approved  (visible in gallery)
 ```
 src/
   actions/
-    upload.action.ts     # Server function: validates → uploads to Cloudinary → saves
+    photos.action.ts              # getAllPhotosAction, getApprovedPhotosAction
+    upload-chunk.action.ts        # Chunked upload → assemble → Cloudinary
+    moderate.action.ts            # Human moderation — updates Cloudinary context
+    refresh-moderation.action.ts  # Poll Cloudinary Admin API for WebPurify result
   components/
-    ui/                  # ShadCN UI primitives (Button, Card, Badge)
-    photo-card.tsx       # Single photo card with status badge
-    photo-wall.tsx       # Responsive grid of photo cards
-    upload-form.tsx      # File picker + validation + upload logic
+    upload-form.tsx               # File picker, chunk loop, progress UI
+    photo-card.tsx                # Gallery card with status + moderation badges
+    photo-lightbox.tsx            # Full-screen lightbox with blurred background fill
+    photo-wall.tsx                # Responsive masonry grid
+    pipeline-panel.tsx            # Visual upload pipeline explainer
+    ui/                           # ShadCN UI primitives (Button, Card, Badge)
   lib/
-    cloudinary.ts        # Cloudinary SDK config & upload helper
-    mock-photos.ts       # In-memory photo store (swap for DB later)
-    utils.ts             # cn(), formatDate(), file validation
+    cloudinary.ts                 # Cloudinary SDK — upload, fetch, update (server-only)
+    cloudinary-url.ts             # Client-safe URL builder (no API secret)
+    utils.ts                      # cn(), formatDate(), file validation, arrayBufferToBase64
   routes/
-    __root.tsx           # Root layout (header, footer, scripts)
-    index.tsx            # Home page (/)
-    upload.tsx           # Upload page (/upload)
-    gallery.tsx          # Gallery page (/gallery)
+    __root.tsx                    # Root layout (header, footer)
+    index.tsx                     # Home page (/)
+    upload.tsx                    # Upload page (/upload)
+    gallery.tsx                   # Gallery page (/gallery)
+    moderate.tsx                  # Moderation queue (/moderate)
+    about.tsx                     # About page (/about)
   types/
-    photo.ts             # Photo & CloudinaryUploadResult types
+    photo.ts                      # Photo, PhotoStatus, CloudinaryUploadResult
 ```
+
+> **Important:** `src/lib/cloudinary.ts` is the only file that imports from the `cloudinary` npm package. All other files import from `../lib/cloudinary`. This keeps the Cloudinary Node.js SDK out of the client bundle.
 
 ---
 
@@ -117,6 +171,17 @@ src/
 | Command | Description |
 |---|---|
 | `npm run dev` | Start the development server on port 3000 |
-| `npm run build` | Build for production |
+| `npm run build` | Production build |
 | `npm run preview` | Preview the production build |
 | `npm test` | Run unit tests with Vitest |
+
+---
+
+## Deploying to Vercel
+
+1. Push the repo to GitHub
+2. Import into [Vercel](https://vercel.com)
+3. Add all environment variables from `.env.local` in the Vercel project settings
+4. Deploy — Vercel runs `npm run build` and serves the TanStack Start SSR output
+
+No database or persistent storage is required; Cloudinary holds all photo data.
