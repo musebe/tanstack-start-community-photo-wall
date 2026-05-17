@@ -440,3 +440,9 @@ User picks a file
 - Explore Cloudinary's AI tagging (`auto_tagging`) to add searchable labels to every photo automatically
 
 The full source code is at **[github.com/musebe/tanstack-start-community-photo-wall](https://github.com/musebe/tanstack-start-community-photo-wall)** and the live demo runs at **[tanstack-start-community-photo-wall.vercel.app](https://tanstack-start-community-photo-wall.vercel.app)**.
+
+---
+
+*Written by **Eugene Musebe** · [github.com/musebe](https://github.com/musebe)*
+
+*Built with [Cloudinary](https://cloudinary.com) — the media platform that handles upload, transformation, optimisation, and AI moderation so you can focus on your product.*
