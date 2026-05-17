@@ -40,16 +40,48 @@ npm install
 
 In your [Cloudinary Console](https://cloudinary.com/console):
 
+#### General tab
+
 1. Go to **Settings → Upload → Upload presets → Add upload preset**
 2. Set **Preset name** to `community_photo_wall`
 3. Set **Signing mode** to **Signed**
-4. Under **Folder**, enter `community-photo-wall`
-5. Under **Tags**, add `ugc` and `photo-wall`
-6. Under **Incoming transformations**, add:
-   - Resize: `c_fill, w_800, h_800, g_auto:faces, q_auto, f_webp`
-   - Watermark overlay (logo or text)
+4. Set **Folder** to `community-photo-wall`
+
+#### Upload tab
+
+5. Under **Tags**, add `ugc` and `photo-wall` (comma-separated)
+   - `photo-wall` is the tag the app uses to fetch all photos via the Admin API
+   - `ugc` marks assets as user-generated content
+
+#### Incoming transformations tab
+
+6. Click **Edit transformation** and add a chained transformation with these steps in order:
+
+   | Step | Parameter | Value |
+   |---|---|---|
+   | 1 | Crop mode | `fill` |
+   | 1 | Width | `800` |
+   | 1 | Height | `800` |
+   | 1 | Gravity | `auto:faces` |
+   | 1 | Quality | `auto` |
+   | 1 | Format | `webp` |
+   | 2 | Overlay | your logo `public_id`, or use a text overlay: `© PhotoWall` |
+   | 2 | Gravity | `south_east` |
+   | 2 | X / Y offset | `12` / `12` |
+   | 2 | Width | `130` |
+   | 2 | Opacity | `60` |
+   | 2 | Effect | `brightness:20` |
+
+   Step 1 resizes and crops; step 2 adds the watermark. Both run before the file is stored.
+
+#### Moderation tab (WebPurify addon required)
+
 7. Under **Moderation**, select **WebPurify**
-8. Save
+   - This triggers automatic AI moderation on every upload
+   - The result (`approved` / `rejected`) is pushed via webhook or polled via the Admin API
+   - You must have the [WebPurify addon](https://cloudinary.com/documentation/webpurify_image_moderation_addon) enabled on your Cloudinary account (free tier available)
+
+8. Click **Save**
 
 ### 3. Set environment variables
 
