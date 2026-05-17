@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { Link } from "@tanstack/react-router";
 import { formatDate, formatBytes } from "../lib/utils";
-import { CLOUDINARY_TRANSFORMS, isCloudinaryPhoto } from "../lib/cloudinary-url";
+import { CLOUDINARY_TRANSFORMS, getAmbientUrl, isCloudinaryPhoto } from "../lib/cloudinary-url";
 import type { Photo, PhotoStatus } from "../types/photo";
 
 interface PhotoLightboxProps {
@@ -33,6 +33,7 @@ const MODERATION_BADGE: Record<
 
 export function PhotoLightbox({ photo, onClose }: PhotoLightboxProps) {
   const cloudinary = isCloudinaryPhoto(photo.publicId);
+  const ambientUrl = getAmbientUrl(photo.publicId, photo.url);
   const status = STATUS_STYLES[photo.status];
   const modBadge = photo.moderationSource
     ? MODERATION_BADGE[photo.moderationSource][photo.status]
@@ -65,50 +66,58 @@ export function PhotoLightbox({ photo, onClose }: PhotoLightboxProps) {
       aria-label={photo.title}
     >
       <div
-        className="island-shell flex max-h-[90vh] w-full max-w-5xl overflow-hidden rounded-3xl shadow-2xl"
+        className="island-shell flex max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-3xl shadow-[0_32px_80px_rgba(0,0,0,0.5)]"
         onClick={(e) => e.stopPropagation()}
       >
 
-        {/* ── Left: Image ─────────────────────────────────── */}
-        <div className="relative flex-1 overflow-hidden bg-black">
-          {/*
-            Blurred copy fills the space behind the sharp image so the
-            container shows the photo's own colours instead of grey bars.
-            Scale > 1 hides the blurred edges that would otherwise show.
-          */}
-          <img
-            src={photo.url}
-            alt=""
-            aria-hidden
-            className="absolute inset-0 h-full w-full scale-110 object-cover opacity-50 blur-2xl"
-          />
+        {/* ── Left: Image + tags ──────────────────────────── */}
+        <div className="flex flex-1 min-h-0 flex-col gap-3 bg-zinc-950 p-4">
 
-          {/* Sharp foreground */}
-          <img
-            src={photo.url}
-            alt={photo.title}
-            className="relative h-full w-full object-contain"
-          />
+          {/* Image section — ambient glow contained inside rounded frame */}
+          <div className="relative min-h-0 flex-1 overflow-hidden rounded-2xl">
+            {/*
+              Ambient layer: Cloudinary delivers an 80px copy with
+              e_blur:1500 + e_saturation:50 baked in (~1 KB).
+              Stretched full-bleed, it fills dead space with the photo's
+              own colour palette — the same trick Apple Music uses.
+            */}
+            <img
+              src={ambientUrl}
+              alt=""
+              aria-hidden
+              className="absolute inset-0 h-full w-full scale-150 object-cover brightness-75 saturate-150"
+            />
 
-          {/* Status pill — top-left */}
-          <div className={`absolute left-4 top-4 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold backdrop-blur-sm ${status.pill}`}>
-            <span className={`h-1.5 w-1.5 rounded-full ${status.dot}`} />
-            {status.label}
+            {/* Radial vignette — edges darken, centre glows */}
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_70%_70%_at_50%_50%,transparent_25%,rgba(0,0,0,0.55)_100%)]" />
+
+            {/* Sharp photo — floats above the glow */}
+            <img
+              src={photo.url}
+              alt={photo.title}
+              className="relative h-full w-full object-contain drop-shadow-[0_8px_40px_rgba(0,0,0,0.75)]"
+            />
           </div>
 
-          {/* Moderation source badge — below status pill */}
-          {modBadge && (
-            <div className={`absolute left-4 top-12 flex items-center gap-1 rounded-full px-3 py-1.5 text-[11px] font-semibold backdrop-blur-sm ${modBadge.cls}`}>
-              {modBadge.label}
-            </div>
-          )}
+          {/* Tags row — status, moderation source, Cloudinary */}
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <span className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${status.pill}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${status.dot}`} />
+              {status.label}
+            </span>
 
-          {/* Cloudinary badge — top-right */}
-          {cloudinary && (
-            <div className="absolute right-4 top-4 flex items-center gap-1 rounded-full bg-black/60 px-2.5 py-1.5 text-[11px] font-medium text-white/90 backdrop-blur-sm">
-              ☁ Cloudinary
-            </div>
-          )}
+            {modBadge && (
+              <span className={`flex items-center gap-1 rounded-full px-3 py-1.5 text-[11px] font-semibold ${modBadge.cls}`}>
+                {modBadge.label}
+              </span>
+            )}
+
+            {cloudinary && (
+              <span className="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2.5 py-1.5 text-[11px] font-medium text-white/70">
+                ☁ Cloudinary
+              </span>
+            )}
+          </div>
         </div>
 
         {/* ── Right: Info panel ───────────────────────────── */}

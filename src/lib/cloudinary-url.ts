@@ -21,6 +21,17 @@ export function isCloudinaryPhoto(publicId: string): boolean {
 }
 
 /**
+ * Ambient background URL — 80px wide, Cloudinary-blurred + saturation-boosted.
+ * Designed to be stretched full-bleed behind the sharp image in the lightbox,
+ * creating an "ambient light" glow that matches the photo's colour palette.
+ * The file is ~1 KB so it loads near-instantly.
+ */
+export function getAmbientUrl(publicId: string, fallback: string): string {
+  if (!CLOUD_NAME || publicId.startsWith("demo/")) return fallback;
+  return `${BASE(CLOUD_NAME)}/f_jpg,q_1,w_80,e_blur:1500,e_saturation:50/${publicId}`;
+}
+
+/**
  * Gallery delivery URL — 800 × 800, auto-format, auto-quality, face-detect fill.
  *
  * Transformation breakdown:
