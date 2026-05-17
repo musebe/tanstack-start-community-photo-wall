@@ -1,6 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
 import { uploadToCloudinary } from "../lib/cloudinary";
-import { addPhoto } from "../lib/mock-photos";
 import type { Photo } from "../types/photo";
 
 interface ChunkPayload {
@@ -35,8 +34,9 @@ function validateChunkPayload(data: unknown): ChunkPayload {
 }
 
 /**
- * Receives one chunk at a time. Returns the created Photo on the final chunk;
- * null for intermediate chunks.
+ * Receives one chunk at a time. On the final chunk, assembles the buffer,
+ * uploads to Cloudinary (including all app metadata as context fields),
+ * and returns the created Photo. Returns null for intermediate chunks.
  */
 export const uploadChunkAction = createServerFn({ method: "POST" })
   .inputValidator(validateChunkPayload)
@@ -55,27 +55,37 @@ export const uploadChunkAction = createServerFn({ method: "POST" })
     const received = chunks.filter((c) => c !== null).length;
     console.log(`[Chunk] upload "${uploadId}": ${received}/${totalChunks} chunks received`);
 
-    if (received < totalChunks) {
-      return null;
-    }
+    if (received < totalChunks) return null;
 
-    // All chunks arrived — assemble and upload
-    console.log(`[Chunk] all chunks received for "${uploadId}", assembling ${totalChunks} chunks…`);
+    console.log(`[Chunk] all chunks received for "${uploadId}", assembling…`);
     chunkBuffers.delete(uploadId);
     const fileBuffer = Buffer.concat(chunks as Buffer[]);
     console.log(`[Chunk] assembled buffer: ${fileBuffer.length} bytes`);
 
-    const result = await uploadToCloudinary(fileBuffer, filename);
+    // Generate a stable ID that gets stored in Cloudinary context
+    const photoId = `photo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const photoTitle = title.trim() || filename;
 
-    return addPhoto({
-      title: title.trim() || filename,
+    const result = await uploadToCloudinary(fileBuffer, filename, {
+      id: photoId,
+      title: photoTitle,
+      originalSize,
+    });
+
+    // Build Photo from upload result + metadata we just stored in Cloudinary context
+    const photo: Photo = {
+      id: photoId,
+      title: photoTitle,
       url: result.secure_url,
       publicId: result.public_id,
+      status: "pending",
+      createdAt: new Date().toISOString(),
       width: result.width,
       height: result.height,
       processedSize: result.bytes,
       originalSize,
-      // WebPurify moderation was requested — status will be updated via webhook
       moderationSource: "webpurify",
-    });
+    };
+
+    return photo;
   });

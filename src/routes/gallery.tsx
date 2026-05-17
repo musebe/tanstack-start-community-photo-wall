@@ -1,16 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { createServerFn } from "@tanstack/react-start";
 import { PhotoWall } from "../components/photo-wall";
 import { Button } from "../components/ui/button";
-import { getApprovedPhotos } from "../lib/mock-photos";
-
-/** Server function — runs on the server, returns only approved photos */
-const fetchApprovedPhotos = createServerFn({ method: "GET" }).handler(() =>
-  getApprovedPhotos()
-);
+import { getApprovedPhotosAction } from "../actions/photos.action";
 
 export const Route = createFileRoute("/gallery")({
-  loader: () => fetchApprovedPhotos(),
+  loader: () => getApprovedPhotosAction(),
   component: GalleryPage,
 });
 

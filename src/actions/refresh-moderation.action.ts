@@ -1,6 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { getModerationStatus } from "../lib/cloudinary";
-import { updatePhotoByPublicId } from "../lib/mock-photos";
+import { getModerationStatus, updatePhotoStatusOnCloudinary } from "../lib/cloudinary";
 import type { Photo } from "../types/photo";
 
 interface RefreshPayload {
@@ -21,7 +20,7 @@ function validateRefreshPayload(data: unknown): RefreshPayload {
 
 /**
  * Poll the Cloudinary Admin API for the current WebPurify moderation status
- * of a single asset. Updates the mock store and returns the updated photo.
+ * of a single asset. Updates the Cloudinary context and returns the updated photo.
  *
  * Production alternative: set CLOUDINARY_WEBHOOK_URL to your server's public
  * URL (/api/cloudinary-webhook) so Cloudinary pushes the result automatically.
@@ -42,5 +41,5 @@ export const refreshModerationAction = createServerFn({ method: "POST" })
       return null; // Still processing
     }
 
-    return updatePhotoByPublicId(publicId, status, "webpurify");
+    return updatePhotoStatusOnCloudinary(publicId, status, "webpurify");
   });

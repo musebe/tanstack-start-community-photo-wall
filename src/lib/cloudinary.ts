@@ -1,5 +1,5 @@
 import { v2 as cloudinary } from "cloudinary";
-import type { CloudinaryUploadResult } from "../types/photo";
+import type { CloudinaryUploadResult, Photo, PhotoStatus } from "../types/photo";
 
 cloudinary.config({
   cloud_name: process.env["CLOUDINARY_CLOUD_NAME"],
@@ -9,24 +9,106 @@ cloudinary.config({
 });
 
 /* ─────────────────────────────────────────────────────────────────── */
-/* Transformation helpers                                               */
+/* Context helpers                                                       */
+/* ─────────────────────────────────────────────────────────────────── */
+
+// Strip characters that would break Cloudinary's key=value|key=value format
+function safeCtxValue(s: string | number | undefined): string {
+  return String(s ?? "").replace(/[|=\n\r]/g, " ").trim();
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function resourceToPhoto(r: any): Photo {
+  const ctx: Record<string, string> = r?.context?.custom ?? {};
+  return {
+    id:               ctx["pw_id"]               ?? String(r.public_id),
+    title:            ctx["pw_title"]             ?? String(r.public_id).split("/").pop() ?? "",
+    url:              String(r.secure_url),
+    publicId:         String(r.public_id),
+    status:           (ctx["pw_status"] as PhotoStatus) ?? "pending",
+    createdAt:        String(r.created_at),
+    width:            Number(r.width),
+    height:           Number(r.height),
+    processedSize:    Number(r.bytes),
+    originalSize:     ctx["pw_original_size"] ? Number(ctx["pw_original_size"]) : undefined,
+    moderationSource: ctx["pw_moderation_source"] as Photo["moderationSource"] | undefined,
+  };
+}
+
+/* ─────────────────────────────────────────────────────────────────── */
+/* Photo store — Cloudinary as the database                             */
 /* ─────────────────────────────────────────────────────────────────── */
 
 /**
- * Incoming transformation applied at upload time — before the file is stored.
- *
- * Why incoming transformations?
- *  • They run once (on upload), not on every delivery request.
- *  • The stored file is already the final, optimised version — zero per-request cost.
- *  • Ideal for UGC: you control the output regardless of what the user sent.
- *
- * Step 1 — Resize + face-detect crop
- *   c_fill       : fill the target rectangle (no letterboxing)
- *   g_auto:faces : centre the crop on detected faces — portraits always look right
- *   w_800, h_800 : max 800 × 800 px
- *   q_auto       : Cloudinary selects the best quality/size tradeoff
- *   f_webp       : store as WebP regardless of the original format
+ * Fetch all PhotoWall photos from Cloudinary using the "photo-wall" tag.
+ * Context fields (pw_*) carry all app metadata — no separate database needed.
  */
+export async function getAllPhotosFromCloudinary(): Promise<Photo[]> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await (cloudinary.api.resources_by_tag as any)("photo-wall", {
+      context: true,
+      max_results: 100,
+    });
+    const photos: Photo[] = (result.resources ?? []).map(resourceToPhoto);
+    // Newest first
+    return photos.sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  } catch (err) {
+    console.error("[Cloudinary] getAllPhotos failed:", err);
+    return [];
+  }
+}
+
+/**
+ * Update pw_status (and optionally pw_moderation_source) on an existing asset.
+ * Uses add_context which merges keys without overwriting unrelated metadata.
+ */
+export async function updatePhotoStatusOnCloudinary(
+  publicId: string,
+  status: PhotoStatus,
+  moderationSource?: Photo["moderationSource"]
+): Promise<Photo | null> {
+  try {
+    let contextStr = `pw_status=${safeCtxValue(status)}`;
+    if (moderationSource) contextStr += `|pw_moderation_source=${safeCtxValue(moderationSource)}`;
+
+    // add_context updates individual keys without replacing the full context
+    await cloudinary.uploader.add_context(contextStr, [publicId]);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const resource = await (cloudinary.api.resource as any)(publicId, { context: true });
+    console.log("[Cloudinary] updatePhotoStatus:", publicId, "→", status);
+    return resourceToPhoto(resource);
+  } catch (err) {
+    console.error("[Cloudinary] updatePhotoStatus failed:", err);
+    return null;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────── */
+/* Moderation status poll (WebPurify)                                    */
+/* ─────────────────────────────────────────────────────────────────── */
+
+export async function getModerationStatus(
+  publicId: string
+): Promise<"approved" | "rejected" | "pending"> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const resource = await (cloudinary.api.resource as any)(publicId, { moderation: true });
+  const entry = Array.isArray(resource?.moderation)
+    ? resource.moderation.find((m: { kind: string }) => m.kind === "webpurify")
+    : null;
+  if (!entry) return "pending";
+  const s = entry.status as string;
+  if (s === "approved" || s === "rejected") return s;
+  return "pending";
+}
+
+/* ─────────────────────────────────────────────────────────────────── */
+/* Transformation helpers                                               */
+/* ─────────────────────────────────────────────────────────────────── */
+
 function buildResizeStep(): object {
   return {
     width: 800,
@@ -38,95 +120,40 @@ function buildResizeStep(): object {
   };
 }
 
-/**
- * Step 2 — Watermark overlay.
- *
- * When CLOUDINARY_WATERMARK_PUBLIC_ID is set: overlay an uploaded logo image.
- * Fallback: render "© PhotoWall" as a text overlay using a built-in font.
- *
- * gravity: south_east  → bottom-right corner
- * opacity: 60          → semi-transparent so it does not dominate the photo
- */
 function buildWatermarkStep(watermarkPublicId: string | undefined): object {
   if (watermarkPublicId) {
     return {
       overlay: watermarkPublicId,
       gravity: "south_east",
-      x: 12,
-      y: 12,
-      width: 130,
-      opacity: 60,
-      effect: "brightness:20",
+      x: 12, y: 12, width: 130, opacity: 60, effect: "brightness:20",
     };
   }
-
   return {
-    overlay: {
-      font_family: "Arial",
-      font_size: 20,
-      font_weight: "bold",
-      text: "© PhotoWall",
-    },
+    overlay: { font_family: "Arial", font_size: 20, font_weight: "bold", text: "© PhotoWall" },
     gravity: "south_east",
-    x: 12,
-    y: 12,
-    color: "white",
-    opacity: 60,
+    x: 12, y: 12, color: "white", opacity: 60,
   };
 }
 
 /* ─────────────────────────────────────────────────────────────────── */
-/* Main upload function                                                  */
+/* Upload                                                                */
 /* ─────────────────────────────────────────────────────────────────── */
 
 /**
- * Upload a raw file buffer to Cloudinary with incoming transformations.
- *
- * The transformation pipeline (applied in order before storage):
- *  1. Resize to 800 × 800, fill crop, face-detect gravity, auto quality, WebP
- *  2. Logo (or text) watermark — bottom-right, semi-transparent
- *
- * Returns the Cloudinary result including the final `secure_url`, `public_id`,
- * processed dimensions, and `bytes` (the stored file size after transformation).
+ * Upload a raw file buffer to Cloudinary.
+ * Stores app metadata (id, title, status, originalSize, moderationSource)
+ * as Cloudinary context fields so photos survive server restarts.
  */
-/**
- * Poll the Cloudinary Admin API for the WebPurify moderation result of one asset.
- * Returns "approved", "rejected", or "pending" (still processing).
- */
-export async function getModerationStatus(
-  publicId: string
-): Promise<"approved" | "rejected" | "pending"> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const resource = await (cloudinary.api.resource as any)(publicId, {
-    moderation: true,
-  });
-
-  console.log("[Cloudinary] moderation resource:", resource?.moderation);
-
-  const entry = Array.isArray(resource?.moderation)
-    ? resource.moderation.find((m: { kind: string }) => m.kind === "webpurify")
-    : null;
-
-  if (!entry) return "pending";
-
-  const s = entry.status as string;
-  if (s === "approved" || s === "rejected") return s;
-  return "pending";
-}
-
 export async function uploadToCloudinary(
   fileBuffer: Buffer,
-  filename: string
+  filename: string,
+  metadata: { id: string; title: string; originalSize: number }
 ): Promise<CloudinaryUploadResult> {
   const watermarkPublicId = process.env["CLOUDINARY_WATERMARK_PUBLIC_ID"];
   const uploadPreset = process.env["CLOUDINARY_UPLOAD_PRESET"];
-
-  const transformation: object[] = [
-    buildResizeStep(),
-    buildWatermarkStep(watermarkPublicId),
-  ];
-
   const notificationUrl = process.env["CLOUDINARY_WEBHOOK_URL"];
+
+  const transformation: object[] = [buildResizeStep(), buildWatermarkStep(watermarkPublicId)];
 
   const uploadOptions = {
     folder: "community-photo-wall",
@@ -135,6 +162,14 @@ export async function uploadToCloudinary(
     resource_type: "image" as const,
     tags: ["ugc", "photo-wall"],
     moderation: "webpurify",
+    // All app metadata stored here — no separate database needed
+    context: {
+      pw_id:                metadata.id,
+      pw_title:             safeCtxValue(metadata.title),
+      pw_status:            "pending",
+      pw_original_size:     String(metadata.originalSize),
+      pw_moderation_source: "webpurify",
+    },
     ...(notificationUrl ? { notification_url: notificationUrl } : {}),
     ...(uploadPreset ? { upload_preset: uploadPreset } : {}),
   };
@@ -143,7 +178,8 @@ export async function uploadToCloudinary(
     filename,
     bytes: fileBuffer.length,
     cloudName: process.env["CLOUDINARY_CLOUD_NAME"],
-    preset: uploadPreset ?? "(none — fine, will use API key auth)",
+    preset: uploadPreset ?? "(none)",
+    metaId: metadata.id,
   });
 
   return new Promise((resolve, reject) => {
@@ -173,7 +209,6 @@ export async function uploadToCloudinary(
         bytes: result.bytes,
       });
     });
-
     stream.end(fileBuffer);
   });
 }

@@ -1,10 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
-import { updatePhotoStatus } from "../lib/mock-photos";
-import type { Photo } from "../types/photo";
+import { updatePhotoStatusOnCloudinary } from "../lib/cloudinary";
+import type { Photo, PhotoStatus } from "../types/photo";
 
 interface ModeratePayload {
-  id: string;
-  status: "approved" | "rejected" | "pending";
+  publicId: string;
+  status: PhotoStatus;
 }
 
 function validateModeratePayload(data: unknown): ModeratePayload {
@@ -12,7 +12,7 @@ function validateModeratePayload(data: unknown): ModeratePayload {
   if (
     typeof data !== "object" ||
     data === null ||
-    typeof d["id"] !== "string" ||
+    typeof d["publicId"] !== "string" ||
     !["approved", "rejected", "pending"].includes(d["status"] as string)
   ) {
     throw new Error("Invalid moderation payload");
@@ -24,5 +24,5 @@ export const moderatePhotoAction = createServerFn({ method: "POST" })
   .inputValidator(validateModeratePayload)
   .handler(async ({ data }): Promise<Photo | null> => {
     // Always tag as "human" — this is a manual override regardless of prior source
-    return updatePhotoStatus(data.id, data.status, "human");
+    return updatePhotoStatusOnCloudinary(data.publicId, data.status, "human");
   });

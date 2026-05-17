@@ -1,16 +1,13 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { createServerFn } from "@tanstack/react-start";
 import { useState } from "react";
-import { getAllPhotos } from "../lib/mock-photos";
+import { getAllPhotosAction } from "../actions/photos.action";
 import { moderatePhotoAction } from "../actions/moderate.action";
 import { refreshModerationAction } from "../actions/refresh-moderation.action";
 import { formatBytes, formatDate } from "../lib/utils";
 import type { Photo, PhotoStatus } from "../types/photo";
 
-const fetchAllPhotos = createServerFn({ method: "GET" }).handler(() => getAllPhotos());
-
 export const Route = createFileRoute("/moderate")({
-  loader: () => fetchAllPhotos(),
+  loader: () => getAllPhotosAction(),
   component: ModeratePage,
 });
 
@@ -22,8 +19,8 @@ function ModeratePage() {
   const approved = photos.filter((p) => p.status === "approved");
   const rejected = photos.filter((p) => p.status === "rejected");
 
-  async function moderate(id: string, status: PhotoStatus) {
-    await moderatePhotoAction({ data: { id, status } });
+  async function moderate(publicId: string, status: PhotoStatus) {
+    await moderatePhotoAction({ data: { publicId, status } });
     await router.invalidate();
   }
 
@@ -191,7 +188,7 @@ function PhotoRow({
   onRefreshWebPurify,
 }: {
   photo: Photo;
-  onModerate: (id: string, status: PhotoStatus) => Promise<void>;
+  onModerate: (publicId: string, status: PhotoStatus) => Promise<void>;
   onRefreshWebPurify: (publicId: string) => Promise<Photo | null>;
 }) {
   const [busy, setBusy] = useState(false);
@@ -200,7 +197,7 @@ function PhotoRow({
   async function act(status: PhotoStatus) {
     setBusy(true);
     try {
-      await onModerate(photo.id, status);
+      await onModerate(photo.publicId, status);
     } finally {
       setBusy(false);
     }
